@@ -1,0 +1,18 @@
+FROM alpine AS chisel
+ARG CHISEL_VERSION=1.1.0
+ARG TARGETARCH
+RUN wget -qO - "https://github.com/canonical/chisel/releases/download/v${CHISEL_VERSION}/chisel_v${CHISEL_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    | tar -xz --no-same-owner -C /usr/local/bin chisel
+WORKDIR /rootfs
+RUN chisel cut --release ubuntu-24.04 --root /rootfs \
+    base-files_base \
+    ca-certificates_data \
+    python3.12_core \
+    libpython3.12-stdlib_net-data \
+    libpython3.12-stdlib_internet
+
+FROM scratch
+COPY --from=chisel /rootfs /
+COPY app/server.py /app/server.py
+EXPOSE 8080
+ENTRYPOINT ["python3.12", "/app/server.py"]

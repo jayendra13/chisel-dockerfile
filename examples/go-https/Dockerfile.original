@@ -1,0 +1,12 @@
+FROM golang:1.22 AS build
+WORKDIR /src
+COPY app/ .
+RUN CGO_ENABLED=0 go build -o /bin/server .
+
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /bin/server /bin/server
+EXPOSE 8080
+ENTRYPOINT ["/bin/server"]

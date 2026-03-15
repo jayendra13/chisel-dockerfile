@@ -1,0 +1,67 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-22.04
+    name: Unit Tests
+    env:
+      TEST_COVERAGE_FILE: test-coverage.out
+      TEST_COVERAGE_HTML_FILE: test-coverage.html
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run unit tests
+        run: go test -v -cover -coverprofile=${TEST_COVERAGE_FILE} ./...
+
+      - name: Convert test coverage to HTML
+        if: always()
+        continue-on-error: true
+        run: |
+          set -eu
+          if [ -f ${TEST_COVERAGE_FILE} ]
+          then
+            go tool cover -html=${TEST_COVERAGE_FILE} \
+              -o=${TEST_COVERAGE_HTML_FILE}
+          fi
+
+      - name: Upload HTML test coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: chisel-test-coverage.html
+          path: ./*.html
+
+  real-archive-tests:
+    name: Real Archive Tests
+    runs-on: ubuntu-22.04
+    container:
+      # Do not change to newer releases as "fips" may not be available there.
+      image: ubuntu:20.04
+    steps:
+      - name: Install git (needed for Go setup)
+        run: |
+          set -x
+          apt-get update && apt-get install -y git
+
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run real archive tests
+        run: |
+          go test ./internal/archive/ --real-archive

@@ -1,0 +1,20 @@
+FROM golang:1.22 AS build
+WORKDIR /src
+COPY app/ .
+RUN CGO_ENABLED=0 go build -o /bin/server .
+
+FROM alpine AS chisel
+ARG CHISEL_VERSION=1.1.0
+ARG TARGETARCH
+RUN wget -qO - "https://github.com/canonical/chisel/releases/download/v${CHISEL_VERSION}/chisel_v${CHISEL_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    | tar -xz --no-same-owner -C /usr/local/bin chisel
+WORKDIR /rootfs
+RUN chisel cut --release ubuntu-24.04 --root /rootfs \
+    base-files_base \
+    ca-certificates_data
+
+FROM scratch
+COPY --from=chisel /rootfs /
+COPY --from=build /bin/server /bin/server
+EXPOSE 8080
+ENTRYPOINT ["/bin/server"]
