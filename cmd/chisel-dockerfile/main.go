@@ -7,7 +7,7 @@ import (
 
 	"github.com/jessevdk/go-flags"
 
-	"github.com/canonical/chisel/internal/dockerfile"
+	"github.com/jayendra13/chisel-dockerfile/internal/dockerfile"
 )
 
 type Options struct {

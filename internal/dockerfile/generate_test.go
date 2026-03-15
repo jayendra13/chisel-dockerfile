@@ -5,7 +5,7 @@ import (
 
 	. "gopkg.in/check.v1"
 
-	"github.com/canonical/chisel/internal/dockerfile"
+	"github.com/jayendra13/chisel-dockerfile/internal/dockerfile"
 )
 
 var generateTests = []struct {
