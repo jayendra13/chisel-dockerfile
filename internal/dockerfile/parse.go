@@ -1,8 +1,12 @@
 package dockerfile
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/moby/buildkit/frontend/dockerfile/instructions"
+	"github.com/moby/buildkit/frontend/dockerfile/parser"
 )
 
 // DockerfileInfo holds the parsed representation of a Dockerfile.
@@ -40,89 +44,94 @@ var ubuntuVersions = map[string]string{
 
 // Parse parses raw Dockerfile content into a DockerfileInfo.
 func Parse(data []byte) (*DockerfileInfo, error) {
-	lines := joinContinuationLines(string(data))
-	info := &DockerfileInfo{}
-	var current *Stage
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		directive := strings.ToUpper(strings.Fields(trimmed)[0])
-
-		if directive == "FROM" {
-			stage := parseFrom(trimmed)
-			info.Stages = append(info.Stages, stage)
-			current = &info.Stages[len(info.Stages)-1]
-			continue
-		}
-
-		if current == nil {
-			return nil, fmt.Errorf("instruction before FROM: %s", trimmed)
-		}
-
-		inst := Instruction{
-			Raw:       line,
-			Directive: directive,
-		}
-
-		if directive == "RUN" {
-			body := trimmed[len("RUN"):]
-			inst.AptPackages = extractAptPackages(body)
-			inst.IsAptInstall = len(inst.AptPackages) > 0
-		}
-
-		current.Lines = append(current.Lines, inst)
+	result, err := parser.Parse(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse Dockerfile: %w", err)
 	}
 
-	if len(info.Stages) == 0 {
+	// Build a map from start line to the AST node's Original text,
+	// so we can recover the raw source for each instruction.
+	origByLine := buildOriginalLineMap(result.AST)
+
+	stages, _, err := instructions.Parse(result.AST, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse Dockerfile instructions: %w", err)
+	}
+
+	if len(stages) == 0 {
 		return nil, fmt.Errorf("no FROM instruction found")
+	}
+
+	info := &DockerfileInfo{}
+
+	for _, bkStage := range stages {
+		stage := Stage{
+			BaseImage: bkStage.BaseName,
+			Alias:     bkStage.Name,
+		}
+
+		// Detect Ubuntu base images.
+		normalized := strings.ToLower(stage.BaseImage)
+		if ver, ok := ubuntuVersions[normalized]; ok {
+			stage.IsUbuntu = true
+			stage.UbuntuVer = ver
+		}
+
+		for _, cmd := range bkStage.Commands {
+			inst := Instruction{
+				Directive: strings.ToUpper(cmd.Name()),
+			}
+
+			// Reconstruct the raw line from the AST node's original text.
+			inst.Raw = rawFromLocation(cmd, origByLine)
+
+			// For RUN commands, extract apt packages.
+			if runCmd, ok := cmd.(*instructions.RunCommand); ok {
+				body := extractRunBody(runCmd)
+				inst.AptPackages = extractAptPackages(body)
+				inst.IsAptInstall = len(inst.AptPackages) > 0
+			}
+
+			stage.Lines = append(stage.Lines, inst)
+		}
+
+		info.Stages = append(info.Stages, stage)
 	}
 
 	return info, nil
 }
 
-// parseFrom parses a FROM line into a Stage.
-func parseFrom(line string) Stage {
-	fields := strings.Fields(line)
-	s := Stage{
-		BaseImage: fields[1],
-	}
-	for i, f := range fields {
-		if strings.EqualFold(f, "AS") && i+1 < len(fields) {
-			s.Alias = fields[i+1]
+// buildOriginalLineMap walks the AST and maps each node's start line to
+// its Original text.
+func buildOriginalLineMap(ast *parser.Node) map[int]string {
+	m := make(map[int]string)
+	for _, child := range ast.Children {
+		if child.Original != "" {
+			m[child.StartLine] = child.Original
 		}
 	}
-	// Detect Ubuntu base images.
-	normalized := strings.ToLower(s.BaseImage)
-	if ver, ok := ubuntuVersions[normalized]; ok {
-		s.IsUbuntu = true
-		s.UbuntuVer = ver
-	}
-	return s
+	return m
 }
 
-// joinContinuationLines joins backslash-continuation lines.
-func joinContinuationLines(content string) []string {
-	var result []string
-	var buf strings.Builder
-	for _, raw := range strings.Split(content, "\n") {
-		trimmed := strings.TrimRight(raw, " \t")
-		if strings.HasSuffix(trimmed, "\\") {
-			buf.WriteString(strings.TrimSuffix(trimmed, "\\"))
-			buf.WriteString(" ")
-			continue
+// rawFromLocation retrieves the original source line for a command using
+// its location information.
+func rawFromLocation(cmd instructions.Command, origByLine map[int]string) string {
+	locs := cmd.Location()
+	if len(locs) > 0 {
+		if orig, ok := origByLine[locs[0].Start.Line]; ok {
+			return orig
 		}
-		buf.WriteString(raw)
-		result = append(result, buf.String())
-		buf.Reset()
 	}
-	if buf.Len() > 0 {
-		result = append(result, buf.String())
+	return ""
+}
+
+// extractRunBody extracts the shell command string from a RunCommand.
+func extractRunBody(cmd *instructions.RunCommand) string {
+	args := cmd.CmdLine
+	if len(args) == 0 {
+		return ""
 	}
-	return result
+	return strings.Join(args, " ")
 }
 
 // extractAptPackages extracts package names from a RUN command body

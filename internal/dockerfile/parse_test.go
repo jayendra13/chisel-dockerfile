@@ -77,11 +77,11 @@ RUN apk add --no-cache curl
 }, {
 	summary: "No FROM instruction",
 	input:   `RUN echo hello`,
-	err:     "instruction before FROM.*",
+	err:     "cannot parse Dockerfile instructions: no build stage in current context",
 }, {
 	summary: "Empty Dockerfile",
 	input:   ``,
-	err:     "no FROM instruction found",
+	err:     "cannot parse Dockerfile: file with no instructions",
 }, {
 	summary: "Multi-line continuation",
 	input: `FROM ubuntu:24.04
